@@ -222,7 +222,7 @@ function boot(){
   app.appendChild(el('div','section-h','<div class="ic" style="background:color-mix(in srgb,var(--brand) 24%,var(--surface))">🧭</div><h2>Qué haría mañana el gerente</h2>'));
   app.appendChild(el('section','actions','')).id='actions';
 
-  app.appendChild(el('footer','',`Dashboard generado solo con datos de <code>ventas-2025.json</code> · ${DATA.length.toLocaleString('es-PE')} líneas de venta · Distribuidora Andina es una empresa ficticia.`));
+  app.appendChild(el('footer','',`KPIs y gráficos en vivo desde <code>andina-pulso.vercel.app/api/resumen</code> · alertas de descuento y tendencias calculadas sobre el dataset (${DATA.length.toLocaleString('es-PE')} líneas). Distribuidora Andina es una empresa ficticia.`));
 
   bindFilters();
   render();
@@ -261,77 +261,118 @@ function bindFilters(){
   });
 }
 
-/* =================== filtro + render =================== */
-function current(){
+/* =================== API /api/resumen =================== */
+const API_BASE='https://andina-pulso.vercel.app/api/resumen';
+let API_OK=true;
+
+function current(){   // dataset filtrado localmente (para alertas/acciones que la API no expone)
   return DATA.filter(r=>
     (!F.mes || String(r.mes)===F.mes) &&
     (!F.region || r.region===F.region) &&
     (!F.canal || r.canal===F.canal) &&
     (!F.vendedor || r.vendedor===F.vendedor));
 }
-function render(){
-  const rows=current();
-  renderScope(rows);
-  renderHeadline(rows);
-  renderKPIs(rows);
-  renderMonth(rows);
-  renderTopProducts(rows);
-  renderHBars('c-region', groupSum(rows,'region','venta'));
-  renderHBars('c-canal', groupSum(rows,'canal','venta'));
+// Resumen local con la MISMA forma que la API (fallback si la API falla)
+function localSummary(rows){
+  const by=(key)=>{const m=groupSum(rows,key,'venta');return [...m.entries()].map(([k,v])=>({[key]:k,ventas:v}));};
+  const mm=groupSum(rows,'mes','venta');
+  return {
+    ventas:sum(rows,r=>r.venta), margen:sum(rows,r=>r.margen),
+    vencido:sum(rows.filter(r=>r.estado_pago==='Vencido'),r=>r.venta),
+    pedidos:new Set(rows.map(r=>r.pedido)).size,
+    ventasPorMes:[...Array(12)].map((_,i)=>({mes:i+1,ventas:mm.get(i+1)||0})),
+    ventasPorRegion:by('region'), ventasPorCanal:by('canal'),
+    top5Productos:by('producto').sort((a,b)=>b.ventas-a.ventas).slice(0,5),
+  };
+}
+async function fetchSummary(){
+  const qs=new URLSearchParams();
+  if(F.mes) qs.set('mes',F.mes);
+  if(F.region) qs.set('region',F.region);
+  if(F.canal) qs.set('canal',F.canal);
+  if(F.vendedor) qs.set('vendedor',F.vendedor);
+  try{
+    const r=await fetch(API_BASE+(qs.toString()?'?'+qs:''),{headers:{'Accept':'application/json'}});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    API_OK=true;
+    return await r.json();
+  }catch(e){
+    API_OK=false;
+    console.warn('[API] falló, uso cálculo local:',e.message);
+    return localSummary(current());
+  }
+}
+
+/* =================== render =================== */
+let reqSeq=0;
+async function render(){
+  const my=++reqSeq;
+  const sc=document.getElementById('scope');
+  if(sc) sc.innerHTML='Consultando la API…';
+  const S=await fetchSummary();
+  if(my!==reqSeq) return;            // evita carreras entre filtros rápidos
+  const rows=current();              // para alertas/acciones/pendiente (dataset)
+  renderScope(S,rows);
+  renderHeadline(S);
+  renderKPIs(S,rows);
+  renderMonth(S.ventasPorMes);
+  renderHBarsArr('c-prod', S.top5Productos, 'producto');
+  renderHBarsArr('c-region', S.ventasPorRegion, 'region');
+  renderHBarsArr('c-canal', S.ventasPorCanal, 'canal');
   renderAlerts(rows);
   renderActions(rows);
 }
-function renderScope(rows){
+function renderScope(S,rows){
   const parts=[];
   if(F.mes) parts.push(MESES[+F.mes-1]);
   if(F.region) parts.push(F.region);
   if(F.canal) parts.push(F.canal);
   if(F.vendedor) parts.push(F.vendedor);
+  const badge = API_OK
+    ? '<span style="color:var(--good);font-weight:700">⚡ en vivo vía API</span>'
+    : '<span style="color:var(--warn);font-weight:700">API no disponible · cálculo local</span>';
   const s=document.getElementById('scope');
-  s.innerHTML = parts.length
-    ? `Mostrando <b>${rows.length.toLocaleString('es-PE')}</b> líneas · filtro: <b>${parts.join(' · ')}</b>`
-    : `Mostrando <b>todo 2025</b> · ${rows.length.toLocaleString('es-PE')} líneas de venta`;
+  s.innerHTML = (parts.length
+    ? `KPIs y gráficos para <b>${parts.join(' · ')}</b>`
+    : `KPIs y gráficos de <b>todo 2025</b>`) + ` · ${badge}`;
 }
 
-/* ---- Titular ---- */
-function renderHeadline(rows){
-  const tot=sum(rows,r=>r.venta);
+/* ---- Titular (desde el resumen de la API) ---- */
+function renderHeadline(S){
   const h=document.getElementById('headline');
-  if(!rows.length){h.innerHTML='<h1>Sin datos para este filtro</h1><p>Ajusta los filtros para ver resultados.</p>';return;}
-  // crecimiento del canal digital H2 vs H1
-  const dig=r=>r.canal==='WhatsApp'||r.canal==='Online';
-  const h1d=sum(rows.filter(r=>r.mes<=6&&dig(r)),r=>r.venta);
-  const h2d=sum(rows.filter(r=>r.mes>6&&dig(r)),r=>r.venta);
-  const gd = h1d>0 ? (h2d-h1d)/h1d*100 : null;
-  const h1=sum(rows.filter(r=>r.mes<=6),r=>r.venta);
-  const h2=sum(rows.filter(r=>r.mes>6),r=>r.venta);
+  const tot=S.ventas||0;
+  if(!tot){h.innerHTML='<h1>Sin datos para este filtro</h1><p>Ajusta los filtros para ver resultados.</p>';return;}
+  const m={}; (S.ventasPorMes||[]).forEach(d=>m[d.mes]=d.ventas);
+  let h1=0,h2=0,best=1,bv=-1;
+  for(let i=1;i<=12;i++){const v=m[i]||0; (i<=6?h1+=v:h2+=v); if(v>bv){bv=v;best=i;}}
   const gsem = h1>0 ? (h2-h1)/h1*100 : null;
-  // mejor mes
-  const mm=groupSum(rows,'mes','venta');
-  let best=1,bv=-1; mm.forEach((v,k)=>{if(v>bv){bv=v;best=k;}});
+  // categoría que más crece (del dataset, la API no expone categorías)
+  const tc=trend(current(),'categoria').filter(x=>x.a+x.b>2000).sort((a,b)=>b.pc-a.pc);
+  const grow=tc[0];
   let sub;
-  if(gd!=null && gsem!=null){
-    sub = `El segundo semestre facturó <b>${soles(h2)}</b> (${pct(gsem)} vs. el primero), empujado por los canales digitales —WhatsApp y Online— que ${gd>=0?'crecieron':'cayeron'} <b>${pct(gd)}</b>. El mejor mes fue <b>${MESES[best-1]}</b>.`;
+  if(gsem!=null){
+    sub = `El segundo semestre facturó <b>${soles(h2)}</b> (${pct(gsem)} vs. el primero) y el mejor mes fue <b>${MESES[best-1]}</b>.`;
   }else{
     sub = `El mejor mes fue <b>${MESES[best-1]}</b> con ${soles(bv)}.`;
   }
+  if(grow) sub += ` La categoría que más crece es <b>${grow.k}</b> (${pct(grow.pc)}).`;
   h.innerHTML =
     `<div class="eyebrow">El hallazgo del año</div>
      <h1>Ventas por <b>${soles(tot)}</b> y un cierre al alza, pero con cobranza por ordenar.</h1>
      <p>${sub}</p>`;
 }
 
-/* ---- KPIs con semáforo ---- */
-function renderKPIs(rows){
-  const tot=sum(rows,r=>r.venta);
-  const mar=sum(rows,r=>r.margen);
+/* ---- KPIs con semáforo (desde la API; pendiente desde el dataset) ---- */
+function renderKPIs(S,rows){
+  const tot=S.ventas||0;
+  const mar=S.margen||0;
   const marPct = tot>0 ? mar/tot*100 : 0;
-  const pedidos=new Set(rows.map(r=>r.pedido)).size;
-  const venc=sum(rows.filter(r=>r.estado_pago==='Vencido'),r=>r.venta);
+  const pedidos=S.pedidos||0;
+  const venc=S.vencido||0;
   const vencPct = tot>0 ? venc/tot*100 : 0;
   const pend=sum(rows.filter(r=>r.estado_pago==='Pendiente'),r=>r.venta);
 
-  // semáforo: margen (>32 good, 28-32 warn, <28 crit); vencido (<6 good,6-10 warn,>10 crit)
+  // semáforo: margen (>=32 good, 28-32 warn, <28 crit); vencido (<6 good,6-10 warn,>10 crit)
   const sMar = marPct>=32?'good':marPct>=28?'warn':'crit';
   const sVenc = vencPct<6?'good':vencPct<=10?'warn':'crit';
   const col={good:'var(--good)',warn:'var(--warn)',crit:'var(--crit)'};
@@ -348,16 +389,16 @@ function renderKPIs(rows){
   const tagEl=(s)=>`<span class="tag" style="background:color-mix(in srgb,${col[s]} 20%, transparent);color:${col[s]}">● ${txt[s]}</span>`;
 
   document.getElementById('kpis').innerHTML =
-    card('var(--brand)','Ventas', soles(tot), `${rows.length.toLocaleString('es-PE')} líneas`, '') +
+    card('var(--brand)','Ventas', soles(tot), `${PEN.format(pedidos)} pedidos`, '') +
     card(col[sMar],'Margen', soles(mar), `<b>${PEN1.format(marPct)}%</b> sobre ventas`, tagEl(sMar)) +
     card('var(--s1)','Pedidos', PEN.format(pedidos), `Ticket prom. <b>${soles(ticket)}</b>`, '') +
     card(col[sVenc],'Vencido', soles(venc), `<b>${PEN1.format(vencPct)}%</b> · pendiente ${solesK(pend)}`, tagEl(sVenc));
 }
 
 /* ---- gráfico barras verticales (meses) con SVG + hover ---- */
-function renderMonth(rows){
-  const m=groupSum(rows,'mes','venta');
-  const vals=[]; for(let i=1;i<=12;i++) vals.push({k:i,v:m.get(i)||0});
+function renderMonth(serie){
+  const m={}; (serie||[]).forEach(d=>m[d.mes]=d.ventas);
+  const vals=[]; for(let i=1;i<=12;i++) vals.push({k:i,v:m[i]||0});
   const host=document.getElementById('c-mes');
   const max=Math.max(1,...vals.map(d=>d.v));
   const W=560,H=210,padL=8,padB=22,padT=8,padR=8;
@@ -377,14 +418,14 @@ function renderMonth(rows){
   attachTips(host);
 }
 
-/* ---- barras horizontales reutilizable ---- */
-function renderHBars(id, map, opts={}){
+/* ---- barras horizontales reutilizable (arreglo [{<keyField>, ventas}]) ---- */
+function renderHBarsArr(id, data, keyField){
   const host=document.getElementById(id);
-  let arr=[...map.entries()].map(([k,v])=>({k,v})).sort((a,b)=>b.v-a.v);
-  if(opts.top) arr=arr.slice(0,opts.top);
+  if(!host) return;
+  let arr=(data||[]).map(d=>({k:d[keyField], v:d.ventas||0})).sort((a,b)=>b.v-a.v);
   const total=arr.reduce((s,d)=>s+d.v,0);
   const max=Math.max(1,...arr.map(d=>d.v));
-  if(!arr.length){host.innerHTML='<p class="hint">Sin datos.</p>';return;}
+  if(!arr.length){host.innerHTML='<p class="hint">Sin datos para este filtro.</p>';return;}
   host.innerHTML = arr.map(d=>{
     const w=(d.v/max*100).toFixed(1);
     const share= total>0 ? ' · '+PEN1.format(d.v/total*100)+'%' : '';
@@ -396,9 +437,6 @@ function renderHBars(id, map, opts={}){
     </div>`;
   }).join('');
   attachTips(host);
-}
-function renderTopProducts(rows){
-  renderHBars('c-prod', groupSum(rows,'producto','venta'), {top:5});
 }
 
 /* ---- tooltips ---- */
