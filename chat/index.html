@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Analista Andina · Chat</title>
+<meta name="description" content="Analista Andina: agente de ventas que responde solo con cifras reales de la API /api/resumen de Distribuidora Andina (empresa ficticia).">
+<style>
+  :root{
+    color-scheme:dark;
+    --bg:#16120e; --surface:#211b15; --surface-2:#2a2219; --line:#3a3026;
+    --ink:#fbf6ee; --ink-2:#cdbfa9; --muted:#9c8d75;
+    --brand:#e8923b; --brand-soft:#7a4e22; --accent:#d7603a;
+    --good:#4caf6a; --warn:#f0b429; --crit:#e05a4a;
+    --radius:16px; --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.22);
+    --font:"Segoe UI",system-ui,-apple-system,Roboto,Helvetica,Arial,sans-serif;
+  }
+  :root[data-theme="light"]{
+    color-scheme:light;
+    --bg:#f6f0e6; --surface:#fffdf8; --surface-2:#f3ece0; --line:#e6dcc9;
+    --ink:#241c12; --ink-2:#5f5342; --muted:#8a7a63;
+    --brand:#c76e1e; --brand-soft:#f0d9bd; --accent:#c2502c;
+    --good:#2e8b57; --warn:#c98a00; --crit:#c53a2b;
+    --shadow:0 1px 2px rgba(80,50,10,.08),0 8px 24px rgba(80,50,10,.08);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:
+      radial-gradient(1200px 600px at 80% -10%, rgba(232,146,59,.10), transparent 60%),
+      var(--bg);
+    color:var(--ink);font-family:var(--font);line-height:1.5;-webkit-font-smoothing:antialiased;
+    display:flex;flex-direction:column;min-height:100%}
+
+  header.top{position:sticky;top:0;z-index:40;backdrop-filter:blur(8px);
+    background:color-mix(in srgb,var(--bg) 82%,transparent);border-bottom:1px solid var(--line)}
+  .top-in{display:flex;align-items:center;gap:14px;padding:12px 16px;max-width:860px;margin:0 auto}
+  .logo{width:40px;height:40px;border-radius:12px;flex:0 0 auto;
+    background:linear-gradient(135deg,var(--brand),var(--accent));
+    display:grid;place-items:center;font-size:20px;box-shadow:var(--shadow)}
+  .ttl{font-size:16px;font-weight:700;line-height:1.15}
+  .ttl span{display:block;font-size:12px;font-weight:500;color:var(--ink-2)}
+  .top-sp{flex:1}
+  .lnk{color:var(--ink);text-decoration:none;border:1px solid var(--line);background:var(--surface);
+    border-radius:10px;padding:8px 12px;font-size:13px}
+  .lnk:hover{background:var(--surface-2)}
+
+  main{flex:1;width:100%;max-width:860px;margin:0 auto;padding:16px;display:flex;flex-direction:column;gap:14px}
+  .intro{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow)}
+  .intro h1{margin:0 0 6px;font-size:18px}
+  .intro p{margin:0;color:var(--ink-2);font-size:13.5px}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+  .chip{border:1px solid var(--line);background:var(--surface-2);color:var(--ink-2);border-radius:999px;
+    padding:7px 12px;font-size:12.5px;cursor:pointer}
+  .chip:hover{border-color:var(--brand);color:var(--ink)}
+
+  #feed{display:flex;flex-direction:column;gap:14px;flex:1}
+  .msg{display:flex;gap:10px;max-width:100%}
+  .msg .av{width:30px;height:30px;border-radius:9px;flex:0 0 auto;display:grid;place-items:center;font-size:15px}
+  .msg.user{flex-direction:row-reverse}
+  .msg .av.a{background:linear-gradient(135deg,var(--brand),var(--accent))}
+  .msg .av.u{background:var(--surface-2);border:1px solid var(--line)}
+  .bubble{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:11px 14px;
+    font-size:14px;box-shadow:var(--shadow);white-space:pre-wrap;word-wrap:break-word}
+  .msg.user .bubble{background:color-mix(in srgb,var(--brand) 16%,var(--surface))}
+  .msg .col{display:flex;flex-direction:column;gap:8px;min-width:0}
+
+  /* panel "qué consultó" */
+  .queried{border:1px dashed var(--line);border-radius:12px;background:var(--surface-2);padding:10px 12px;font-size:12.5px}
+  .queried .qh{font-weight:700;color:var(--brand);display:flex;align-items:center;gap:6px;margin-bottom:6px}
+  .queried table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+  .queried td{padding:2px 6px;color:var(--ink-2)}
+  .queried td:first-child{color:var(--muted)}
+  .queried .flt{font-family:ui-monospace,Menlo,monospace;color:var(--ink);font-size:12px;margin-bottom:6px;word-break:break-all}
+
+  .typing{color:var(--muted);font-size:13px;display:flex;align-items:center;gap:8px}
+  .dotpulse{width:7px;height:7px;border-radius:50%;background:var(--brand);animation:bl 1s infinite}
+  @keyframes bl{0%,100%{opacity:.3}50%{opacity:1}}
+  .err{color:var(--crit);font-size:13px;border:1px solid var(--crit);border-radius:10px;padding:10px;background:color-mix(in srgb,var(--crit) 10%,var(--surface))}
+
+  .composer{position:sticky;bottom:0;background:color-mix(in srgb,var(--bg) 90%,transparent);
+    padding:12px 0 16px;border-top:1px solid var(--line)}
+  .composer .row{display:flex;gap:10px;max-width:860px;margin:0 auto;padding:0 16px}
+  #inp{flex:1;resize:none;background:var(--surface);color:var(--ink);border:1px solid var(--line);
+    border-radius:12px;padding:12px 14px;font:inherit;font-size:14px;max-height:140px}
+  #inp:focus{outline:2px solid var(--brand);outline-offset:1px}
+  #send{background:linear-gradient(135deg,var(--brand),var(--accent));color:#2a1706;border:0;border-radius:12px;
+    padding:0 18px;font:inherit;font-weight:700;cursor:pointer}
+  #send:disabled{opacity:.5;cursor:default}
+  .foot{max-width:860px;margin:6px auto 0;padding:0 16px;color:var(--muted);font-size:11.5px;text-align:center}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="top-in">
+    <div class="logo">🤝</div>
+    <div class="ttl">Analista Andina
+      <span>Agente de ventas · Distribuidora Andina (ficticia)</span>
+    </div>
+    <div class="top-sp"></div>
+    <a class="lnk" href="../">← Dashboard</a>
+  </div>
+</header>
+
+<main>
+  <div class="intro">
+    <h1>Hola, soy <b>Analista Andina</b> 👋</h1>
+    <p>Respondo solo con cifras reales que consulto en vivo a la API <code>/api/resumen</code>. No invento números: te muestro exactamente qué consulté. Pregúntame por ventas, margen, pedidos o cobranza, y filtra por mes, región, canal o vendedor.</p>
+    <div class="chips" id="chips">
+      <span class="chip">¿Cuánto vendimos en diciembre?</span>
+      <span class="chip">Ventas de Lima vs. Norte</span>
+      <span class="chip">¿Cómo le fue a Jorge Huamán?</span>
+      <span class="chip">Top 5 productos del canal WhatsApp</span>
+      <span class="chip">¿Cuánto está vencido?</span>
+    </div>
+  </div>
+
+  <div id="feed"></div>
+</main>
+
+<div class="composer">
+  <div class="row">
+    <textarea id="inp" rows="1" placeholder="Escribe tu pregunta…" autocomplete="off"></textarea>
+    <button id="send">Enviar</button>
+  </div>
+  <div class="foot" id="foot">Analista Andina puede tardar unos segundos (modelo gratuito). Cifras: API <code>/api/resumen</code>.</div>
+</div>
+
+<script>
+/* ===== endpoint del backend (función Vercel) ===== */
+// En github.io se usa la URL de Vercel; en el propio deploy de Vercel se usa ruta relativa.
+// Se puede sobreescribir con ?api=https://tu-deploy/api/chat
+const qsApi = new URLSearchParams(location.search).get('api');
+const BACKEND = qsApi
+  || (location.hostname.endsWith('vercel.app') ? '/api/chat'
+  : 'https://pulso-ventas-andina.vercel.app/api/chat');
+
+const PEN = new Intl.NumberFormat('es-PE',{maximumFractionDigits:0});
+const soles = n => 'S/ ' + PEN.format(Math.round(n||0));
+const MESES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Set','Oct','Nov','Dic'];
+const esc = s => String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+const feed = document.getElementById('feed');
+const inp  = document.getElementById('inp');
+const send = document.getElementById('send');
+let history = [];   // {role, content}
+let busy = false;
+
+function addMsg(role, html){
+  const m = document.createElement('div');
+  m.className = 'msg ' + (role==='user'?'user':'assistant');
+  m.innerHTML = `<div class="av ${role==='user'?'u':'a'}">${role==='user'?'🧑':'🤝'}</div><div class="col">${html}</div>`;
+  feed.appendChild(m);
+  m.scrollIntoView({behavior:'smooth',block:'end'});
+  return m;
+}
+
+function fmtFiltros(f){
+  if(!f) return 'todo 2025';
+  const p=[];
+  if(f.mes) p.push('mes '+(MESES[+f.mes-1]||f.mes));
+  if(f.region) p.push('región '+f.region);
+  if(f.canal) p.push('canal '+f.canal);
+  if(f.vendedor) p.push(f.vendedor);
+  return p.length ? p.join(' · ') : 'todo 2025';
+}
+function queriedPanel(queries){
+  if(!queries || !queries.length) return '';
+  const blocks = queries.map(q=>{
+    if(q.error) return `<div class="flt">🔎 ${esc(fmtFiltros(q.filtros))} → error: ${esc(q.error)}</div>`;
+    const d=q.resultado||{};
+    return `<div style="margin-bottom:8px">
+      <div class="flt">🔎 Consulté /api/resumen · ${esc(fmtFiltros(q.filtros))}</div>
+      <table>
+        <tr><td>Ventas</td><td><b>${soles(d.ventas)}</b></td><td>Margen</td><td><b>${soles(d.margen)}</b></td></tr>
+        <tr><td>Pedidos</td><td><b>${PEN.format(d.pedidos||0)}</b></td><td>Vencido</td><td><b>${soles(d.vencido)}</b></td></tr>
+      </table></div>`;
+  }).join('');
+  return `<div class="queried"><div class="qh">📊 Qué consultó (cifras reales de la API)</div>${blocks}</div>`;
+}
+
+async function ask(text){
+  if(busy || !text.trim()) return;
+  busy = true; send.disabled = true;
+  addMsg('user', `<div class="bubble">${esc(text)}</div>`);
+  history.push({role:'user', content:text});
+  inp.value=''; inp.style.height='auto';
+
+  const thinking = addMsg('assistant', `<div class="typing"><span class="dotpulse"></span> Analista Andina está consultando la API…</div>`);
+
+  try{
+    const r = await fetch(BACKEND, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({messages:history})
+    });
+    const j = await r.json();
+    thinking.remove();
+    if(!r.ok || j.error){
+      addMsg('assistant', `<div class="err">⚠️ ${esc(j.error||('Error '+r.status))}</div>`);
+    }else{
+      const q = queriedPanel(j.queries);
+      addMsg('assistant', `${q}<div class="bubble">${esc(j.reply||'(sin respuesta)')}</div>`);
+      history.push({role:'assistant', content:j.reply||''});
+    }
+  }catch(e){
+    thinking.remove();
+    addMsg('assistant', `<div class="err">⚠️ No pude contactar al agente (${esc(e.message)}).<br>Si ves esto en GitHub Pages, el backend aún no está desplegado en Vercel.</div>`);
+  }finally{
+    busy=false; send.disabled=false; inp.focus();
+  }
+}
+
+send.addEventListener('click', ()=>ask(inp.value));
+inp.addEventListener('keydown', e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); ask(inp.value); }});
+inp.addEventListener('input', ()=>{ inp.style.height='auto'; inp.style.height=Math.min(inp.scrollHeight,140)+'px'; });
+document.getElementById('chips').addEventListener('click', e=>{ if(e.target.classList.contains('chip')) ask(e.target.textContent); });
+
+/* tema compartido con el dashboard */
+try{ if((localStorage.getItem('andina-theme')||'dark')==='light') document.documentElement.setAttribute('data-theme','light'); }catch(e){}
+</script>
+</body>
+</html>
