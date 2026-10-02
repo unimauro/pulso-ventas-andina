@@ -54,25 +54,31 @@ async function resumenVentas(filtros = {}) {
   return { url, data };
 }
 
-// extrae el primer objeto JSON balanceado del texto del modelo
+// Extrae el objeto JSON del protocolo. Recorre TODOS los objetos balanceados de
+// nivel superior (ignora los que están dentro de <think>…</think> o de razonamiento)
+// y prefiere el último que contenga "accion"; si no, el último que parsee.
 function extractJSON(text) {
   if (!text) return null;
-  const start = text.indexOf("{");
-  if (start < 0) return null;
-  let depth = 0, inStr = false, esc = false;
-  for (let i = start; i < text.length; i++) {
-    const c = text[i];
+  const clean = text.replace(/<think>[\s\S]*?<\/think>/gi, " ");
+  const candidates = [];
+  let depth = 0, inStr = false, esc = false, startIdx = -1;
+  for (let i = 0; i < clean.length; i++) {
+    const c = clean[i];
     if (inStr) {
       if (esc) esc = false;
       else if (c === "\\") esc = true;
       else if (c === '"') inStr = false;
-    } else {
-      if (c === '"') inStr = true;
-      else if (c === "{") depth++;
-      else if (c === "}") { depth--; if (depth === 0) { try { return JSON.parse(text.slice(start, i + 1)); } catch { return null; } } }
-    }
+    } else if (c === '"') inStr = true;
+    else if (c === "{") { if (depth === 0) startIdx = i; depth++; }
+    else if (c === "}") { depth--; if (depth === 0 && startIdx >= 0) { candidates.push(clean.slice(startIdx, i + 1)); startIdx = -1; } }
   }
-  return null;
+  let fallback = null;
+  for (const cand of candidates) {
+    let obj; try { obj = JSON.parse(cand); } catch { continue; }
+    fallback = obj;
+    if (obj && obj.accion) return obj; // prioriza el objeto del protocolo
+  }
+  return fallback;
 }
 
 async function callLLM(messages, apiKey) {
