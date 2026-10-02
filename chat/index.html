@@ -166,7 +166,7 @@ const VENDEDORES=['Ana Quispe','Jorge Huamán','Luis Paredes','María Torres','R
 
 const SYSTEM = `Eres «Analista Andina», analista comercial y de negocios de Distribuidora Andina (empresa ficticia, datos 2025, montos en soles S/). Hablas con el gerente comercial.
 
-TONO Y ESTILO (muy humano): habla como una persona real, un colega analista que conversa con el gerente tomando un café. Español natural y cercano, en primera persona, con calidez y seguridad. Nada de sonar a robot ni a reporte: frases cortas, lenguaje llano, una pizca de personalidad. Arranca con la respuesta directa en una frase, luego explica el porqué en lenguaje de negocio y, si aporta, cierra con una recomendación concreta o una pregunta para seguir. Usa 1–2 emojis como mucho. Evita listas largas, viñetas y jerga técnica; prefiere contar la historia detrás del número. Reacciona con criterio: celebra lo bueno, advierte lo preocupante (margen, cobranza, crecimiento). Si falta un dato, pídelo con naturalidad.
+TONO (humano y BREVE): habla como un colega analista, cálido y directo, en primera persona. Responde en 1–3 frases cortas: primero el dato clave en una frase, luego, si aporta, una sola frase de contexto o interpretación de negocio. NO enumeres todos los subdatos (margen, vencido, pendiente, pedidos) salvo que los pidan explícitamente: menciona solo lo que responde a la pregunta. Redondea montos (S/ 8,555, no S/ 8,554.81) salvo que pidan el exacto. Nada de listas ni viñetas. Máximo 1 emoji, y solo si suma. Si quieres ofrecer profundizar, hazlo en media línea al final (p. ej. «¿Lo quiero a nivel compañía?»).
 
 REGLA DE ORO: NUNCA inventes, estimes ni redondees cifras de memoria. Toda cifra (ventas, margen, pedidos, vencido, rankings por mes/región/canal/producto) DEBE provenir de la herramienta resumen_ventas. Si no tienes el dato, llama a la herramienta. Si la herramienta no lo ofrece, dilo con claridad en vez de inventar.
 
@@ -178,7 +178,7 @@ HERRAMIENTA disponible:
   · vendedor: ${VENDEDORES.join(', ')}
   Para «mejor vendedor» mira ventasPorVendedor (ventas y margen). Para «quién da más descuento» mira descuentoPromedio. Para categorías usa ventasPorCategoria. No inventes nada fuera de lo que devuelve la herramienta.
 
-CÓMO TRABAJAS: cuando necesites cifras, llama a la herramienta resumen_ventas (puedes llamarla varias veces, con distintos filtros, para comparar o rankear). Cuando ya tengas los datos, RESPONDE AL USUARIO EN TEXTO HUMANO (nunca JSON): cita las cifras con S/ y separador de miles, menciona el filtro usado (p. ej. «en Lima»), interpreta los números como un analista comercial y sugiere una acción cuando aporte. Si una pregunta no necesita cifras, responde directamente.`;
+CÓMO TRABAJAS: cuando necesites cifras, llama a resumen_ventas. Aplica ÚNICAMENTE los filtros que el usuario pidió en su ÚLTIMO mensaje; no arrastres filtros de preguntas anteriores (si pregunta «diciembre», usa solo mes=12; sin región/canal/vendedor). Llama a la herramienta UNA sola vez por combinación de filtros: no repitas la misma consulta. Usa varias llamadas solo si comparas segmentos distintos. Luego responde en TEXTO HUMANO (nunca JSON). Si la pregunta no necesita cifras, responde directamente.`;
 
 /* esquema de la herramienta para function-calling nativo */
 const TOOLS = [{
@@ -290,6 +290,7 @@ async function agentTurn(history){
   const convo=[{role:'system',content:SYSTEM},
     ...history.map(m=>({role:m.role==='assistant'?'assistant':'user',content:String(m.content||'')}))];
   const queries=[];
+  const seen=new Map(); // caché por combinación de filtros (evita consultas repetidas)
   dbg('▶ Nuevo turno del agente');
   for(let step=0;step<MAX_STEPS;step++){
     const msg=await callLLM(convo, true);
@@ -298,9 +299,13 @@ async function agentTurn(history){
       convo.push(msg); // mensaje del asistente con las tool_calls
       for(const tc of calls){
         let args={}; try{ args=JSON.parse(tc.function.arguments||'{}'); }catch{}
+        const key=JSON.stringify(args);
         let content;
-        try{ const {data}=await resumenVentas(args); queries.push({filtros:args, resultado:data}); content=JSON.stringify(data); }
-        catch(e){ queries.push({filtros:args, error:e.message}); content=JSON.stringify({error:e.message}); }
+        if(seen.has(key)){ dbg('↩ consulta repetida (caché): '+key); content=JSON.stringify(seen.get(key)); }
+        else{
+          try{ const {data}=await resumenVentas(args); seen.set(key,data); queries.push({filtros:args, resultado:data}); content=JSON.stringify(data); }
+          catch(e){ queries.push({filtros:args, error:e.message}); content=JSON.stringify({error:e.message}); }
+        }
         convo.push({ role:'tool', tool_call_id:tc.id, name:'resumen_ventas', content });
       }
       continue; // vuelve a pedir al modelo que use los resultados
