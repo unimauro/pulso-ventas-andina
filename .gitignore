@@ -3,3 +3,5 @@ node_modules/
 .env
 .env.*
 *.key
+config.local.js
+chat/config.local.js
