@@ -356,7 +356,7 @@ function queriedPanel(queries){
         <tr><td>Pedidos</td><td><b>${PEN.format(d.pedidos||0)}</b></td><td>Vencido</td><td><b>${soles(d.vencido)}</b></td></tr>
       </table></div>`;
   }).join('');
-  return `<div class="queried"><div class="qh">📊 Qué consultó (cifras reales de la API)</div>${blocks}</div>`;
+  return `<div class="queried"><div class="qh">📊 Qué consultó</div>${blocks}</div>`;
 }
 
 async function ask(text){
