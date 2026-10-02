@@ -178,14 +178,26 @@ HERRAMIENTA disponible:
   · vendedor: ${VENDEDORES.join(', ')}
   Para «mejor vendedor» mira ventasPorVendedor (ventas y margen). Para «quién da más descuento» mira descuentoPromedio. Para categorías usa ventasPorCategoria. No inventes nada fuera de lo que devuelve la herramienta.
 
-PROTOCOLO: responde SIEMPRE con UN ÚNICO objeto JSON, sin texto alrededor, en una de estas dos formas:
-1) Para consultar datos:
-   {"accion":"resumen_ventas","filtros":{"mes":12,"region":"Lima"},"motivo":"breve"}
-   (incluye sólo los filtros que apliquen)
-2) Para la respuesta final al usuario:
-   {"accion":"final","respuesta":"texto claro en español, citando las cifras obtenidas con S/ y separador de miles"}
+CÓMO TRABAJAS: cuando necesites cifras, llama a la herramienta resumen_ventas (puedes llamarla varias veces, con distintos filtros, para comparar o rankear). Cuando ya tengas los datos, RESPONDE AL USUARIO EN TEXTO HUMANO (nunca JSON): cita las cifras con S/ y separador de miles, menciona el filtro usado (p. ej. «en Lima»), interpreta los números como un analista comercial y sugiere una acción cuando aporte. Si una pregunta no necesita cifras, responde directamente.`;
 
-Puedes encadenar varias consultas (una por turno) antes de la respuesta final. En la respuesta final: menciona el filtro usado (p. ej. «en Lima, diciembre»), interpreta los números como un analista comercial y, cuando tenga sentido, sugiere una acción. Nada de JSON en la respuesta final: solo texto humano.`;
+/* esquema de la herramienta para function-calling nativo */
+const TOOLS = [{
+  type: 'function',
+  function: {
+    name: 'resumen_ventas',
+    description: 'Calcula el resumen de ventas 2025 de Distribuidora Andina desde el dataset oficial, con filtros opcionales. Devuelve ventas, margen, vencido, pendiente, pedidos y desgloses por mes, región, canal, categoría, top 5 productos y por vendedor (con margenPct y descuentoPromedio).',
+    parameters: {
+      type: 'object',
+      properties: {
+        mes:      { type: 'integer', minimum: 1, maximum: 12, description: 'Mes 1..12. Omitir = todo el año.' },
+        region:   { type: 'string', enum: REGIONES },
+        canal:    { type: 'string', enum: CANALES },
+        vendedor: { type: 'string', enum: VENDEDORES }
+      },
+      additionalProperties: false
+    }
+  }
+}];
 
 /* ---- debug visible en la página ---- */
 function dbg(msg, cls){
@@ -200,21 +212,6 @@ function dbg(msg, cls){
 const PEN = new Intl.NumberFormat('es-PE',{maximumFractionDigits:0});
 const soles = n => 'S/ ' + PEN.format(Math.round(n||0));
 const esc = s => String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-
-function extractJSON(text){
-  if(!text) return null;
-  const clean=text.replace(/<think>[\s\S]*?<\/think>/gi,' ');
-  const cands=[]; let depth=0,inStr=false,escp=false,s=-1;
-  for(let i=0;i<clean.length;i++){const c=clean[i];
-    if(inStr){ if(escp)escp=false; else if(c==='\\')escp=true; else if(c==='"')inStr=false; }
-    else if(c==='"')inStr=true;
-    else if(c==='{'){ if(depth===0)s=i; depth++; }
-    else if(c==='}'){ depth--; if(depth===0&&s>=0){ cands.push(clean.slice(s,i+1)); s=-1; } }
-  }
-  let fb=null;
-  for(const cn of cands){ let o; try{o=JSON.parse(cn);}catch{continue;} fb=o; if(o&&o.accion)return o; }
-  return fb;
-}
 
 /* dataset oficial, cargado una sola vez desde ventas-2025.json */
 let DATASET=null, DATASET_PROMISE=null;
@@ -265,8 +262,11 @@ async function resumenVentas(f={}){
   return {url:'ventas-2025.json ('+rows.length+' líneas)', data:summary};
 }
 
-async function callLLM(messages){
-  dbg('→ OpenRouter ['+MODEL+'] · '+messages.length+' mensajes','dbg-llm');
+// Llama a OpenRouter (chat completions). useTools=false fuerza respuesta de texto.
+async function callLLM(messages, useTools){
+  dbg('→ OpenRouter ['+MODEL+'] · '+messages.length+' mensajes'+(useTools?' · con herramientas':' · texto final'),'dbg-llm');
+  const body={ model:MODEL, temperature:0.3, max_tokens:1600, messages };
+  if(useTools){ body.tools=TOOLS; body.tool_choice='auto'; }
   const r=await fetch(OPENROUTER,{
     method:'POST',
     headers:{
@@ -275,41 +275,49 @@ async function callLLM(messages){
       'HTTP-Referer':location.origin,
       'X-Title':'Analista Andina'
     },
-    body:JSON.stringify({model:MODEL,temperature:0.2,max_tokens:900,messages})
+    body:JSON.stringify(body)
   });
   const j=await r.json();
   if(!r.ok){ const em='OpenRouter '+r.status+': '+((j.error&&j.error.message)||JSON.stringify(j)).slice(0,300); dbg('✖ '+em,'dbg-err'); throw new Error(em); }
-  const content=(j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '';
-  dbg('← OpenRouter '+r.status+' · '+content.length+' chars: '+content.slice(0,140).replace(/\s+/g,' '),'dbg-llm');
-  return content;
+  const msg=(j.choices && j.choices[0] && j.choices[0].message) || {};
+  const nTools=(msg.tool_calls&&msg.tool_calls.length)||0;
+  dbg('← OpenRouter '+r.status+' · '+(nTools?nTools+' tool_call(s)':((msg.content||'').length+' chars: '+(msg.content||'').slice(0,120).replace(/\s+/g,' '))),'dbg-llm');
+  return msg;
 }
 
-/* ---- bucle del agente (en el navegador) ---- */
+/* ---- bucle del agente con function-calling nativo ---- */
 async function agentTurn(history){
   const convo=[{role:'system',content:SYSTEM},
     ...history.map(m=>({role:m.role==='assistant'?'assistant':'user',content:String(m.content||'')}))];
   const queries=[];
   dbg('▶ Nuevo turno del agente');
   for(let step=0;step<MAX_STEPS;step++){
-    const raw=await callLLM(convo);
-    const parsed=extractJSON(raw);
-    dbg('   acción detectada: '+(parsed&&parsed.accion||'(ninguna / sin JSON)'));
-    if(!parsed||!parsed.accion){ dbg('⚠ el modelo no devolvió JSON del protocolo; muestro su texto','dbg-err'); return {reply:(raw||'').trim()||'No pude generar una respuesta.',queries}; }
-    if(parsed.accion==='final'){ dbg('■ respuesta final ('+queries.length+' consultas hechas)','dbg-ok'); return {reply:String(parsed.respuesta||'').trim(),queries}; }
-    if(parsed.accion==='resumen_ventas'){
-      const filtros=parsed.filtros||{};
-      let obs;
-      try{ const {url,data}=await resumenVentas(filtros); queries.push({filtros,url,resultado:data}); obs=JSON.stringify(data); }
-      catch(e){ obs=JSON.stringify({error:'No se pudo consultar: '+e.message}); queries.push({filtros,error:e.message}); }
-      convo.push({role:'assistant',content:raw});
-      convo.push({role:'user',content:`[Resultado de resumen_ventas con filtros ${JSON.stringify(filtros)}]:\n${obs}\n\nResponde ahora con el siguiente JSON del protocolo.`});
-      continue;
+    const msg=await callLLM(convo, true);
+    const calls=msg.tool_calls||[];
+    if(calls.length){
+      convo.push(msg); // mensaje del asistente con las tool_calls
+      for(const tc of calls){
+        let args={}; try{ args=JSON.parse(tc.function.arguments||'{}'); }catch{}
+        let content;
+        try{ const {data}=await resumenVentas(args); queries.push({filtros:args, resultado:data}); content=JSON.stringify(data); }
+        catch(e){ queries.push({filtros:args, error:e.message}); content=JSON.stringify({error:e.message}); }
+        convo.push({ role:'tool', tool_call_id:tc.id, name:'resumen_ventas', content });
+      }
+      continue; // vuelve a pedir al modelo que use los resultados
     }
-    return {reply:(raw||'').trim(),queries};
+    // sin tool_calls → es la respuesta final
+    const reply=(msg.content||'').trim();
+    if(reply){ dbg('■ respuesta final ('+queries.length+' consultas)','dbg-ok'); return {reply, queries}; }
+    // contenido vacío: forzamos una respuesta de texto
+    dbg('⚠ contenido vacío; fuerzo respuesta de texto','dbg-err');
+    convo.push({role:'user',content:'Redacta ahora tu respuesta final en texto humano usando sólo las cifras ya obtenidas.'});
+    const forced=await callLLM(convo, false);
+    return {reply:(forced.content||'').trim()||'No pude redactar la respuesta; revisa el panel de debug.', queries};
   }
-  convo.push({role:'user',content:'Devuelve ya la respuesta final con {"accion":"final","respuesta":"..."} usando sólo las cifras ya obtenidas.'});
-  const last=await callLLM(convo); const p=extractJSON(last);
-  return {reply:((p&&p.respuesta)||last||'').trim(),queries};
+  // se agotaron los pasos: pedir cierre en texto
+  convo.push({role:'user',content:'Cierra con tu respuesta final en texto humano usando sólo las cifras ya obtenidas.'});
+  const last=await callLLM(convo, false);
+  return {reply:(last.content||'').trim()||'No pude redactar la respuesta; revisa el panel de debug.', queries};
 }
 
 /* ---- UI ---- */
