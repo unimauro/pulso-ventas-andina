@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Analista Andina · Chat</title>
-<meta name="description" content="Analista Andina: agente de ventas que responde solo con cifras reales de la API /api/resumen de Distribuidora Andina (empresa ficticia).">
+<meta name="description" content="Analista Andina: agente de ventas que responde solo con cifras reales de ventas-2025.json de Distribuidora Andina (empresa ficticia).">
 <style>
   :root{
     color-scheme:dark;
@@ -92,6 +92,15 @@
     padding:0 18px;font:inherit;font-weight:700;cursor:pointer}
   #send:disabled{opacity:.5;cursor:default}
   .foot{max-width:860px;margin:6px auto 0;padding:0 16px;color:var(--muted);font-size:11.5px;text-align:center}
+
+  .dbgBox{border:1px solid var(--line);border-radius:12px;background:var(--surface);padding:0 12px}
+  .dbgBox summary{cursor:pointer;padding:10px 0;font-size:13px;font-weight:700;color:var(--ink-2)}
+  .dbg-tools{display:flex;align-items:center;gap:10px;margin:4px 0 8px}
+  .dbg-hint{font-size:11.5px;color:var(--muted)}
+  #dbgLog{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;line-height:1.6;max-height:280px;overflow:auto;
+    background:#000;color:#cfe8cf;border-radius:8px;padding:10px;margin-bottom:12px;white-space:pre-wrap;word-break:break-all}
+  #dbgLog:empty::before{content:"(sin actividad todavía — escribe una pregunta)";color:#6a7a6a}
+  .dbg-llm{color:#8ab4f8} .dbg-tool{color:#f0b429} .dbg-ok{color:#6ddf6d} .dbg-err{color:#ff6b6b}
 </style>
 <!-- Config LOCAL (gitignored). Define window.LLM_API_KEY y window.LLM_MODEL.
      Si no existe, la página muestra las instrucciones de configuración. -->
@@ -112,7 +121,7 @@
 <main>
   <div class="intro">
     <h1>Hola, soy <b>Analista Andina</b> 👋</h1>
-    <p>Respondo solo con cifras reales que consulto en vivo a la API <code>/api/resumen</code>. No invento números: te muestro exactamente qué consulté. Funciono <b>en tu máquina</b> (sin backend): el navegador habla directo con OpenRouter usando la key de tu archivo local.</p>
+    <p>Respondo solo con cifras reales que calculo desde el dataset oficial <code>ventas-2025.json</code>. No invento números: te muestro exactamente qué consulté. Funciono <b>en tu máquina</b> (sin backend): el navegador habla directo con OpenRouter usando la key de tu archivo local.</p>
     <div class="chips" id="chips">
       <span class="chip">¿Cuánto vendimos en diciembre?</span>
       <span class="chip">Ventas de Lima vs. Norte</span>
@@ -123,6 +132,12 @@
   </div>
 
   <div id="feed"></div>
+
+  <details id="dbgBox" class="dbgBox">
+    <summary>🐞 Debug — ver si está haciendo las consultas</summary>
+    <div class="dbg-tools"><button id="dbgClear" class="chip">Limpiar</button> <span class="dbg-hint">Cada llamada a OpenRouter y cada cálculo desde ventas-2025.json se registra aquí.</span></div>
+    <div id="dbgLog"></div>
+  </details>
 </main>
 
 <div class="composer">
@@ -130,16 +145,16 @@
     <textarea id="inp" rows="1" placeholder="Escribe tu pregunta…" autocomplete="off"></textarea>
     <button id="send">Enviar</button>
   </div>
-  <div class="foot" id="foot">Modo local · el agente corre en tu navegador. Cifras: API <code>/api/resumen</code>.</div>
+  <div class="foot" id="foot">Modo local · el agente corre en tu navegador. Cifras: <code>ventas-2025.json</code>.</div>
 </div>
 
 <script>
 /* =========================================================================
    Analista Andina — agente 100% client-side (para uso LOCAL, sin backend).
    La key se lee de chat/config.local.js (window.LLM_API_KEY), que NO se sube
-   a git. La herramienta resumen_ventas llama a la API pública /api/resumen.
+   a git. La herramienta resumen_ventas calcula sobre el dataset ventas-2025.json.
    ========================================================================= */
-const RESUMEN_BASE = (window.RESUMEN_URL) || 'https://andina-pulso.vercel.app/api/resumen';
+const DATA_URL     = (window.DATA_URL) || 'https://unimauro.github.io/curso-ia-productividad/material/ventas-2025.json';
 const OPENROUTER   = 'https://openrouter.ai/api/v1/chat/completions';
 const MODEL        = window.LLM_MODEL || 'openai/gpt-5-mini';
 const API_KEY      = window.LLM_API_KEY || '';
@@ -151,17 +166,17 @@ const VENDEDORES=['Ana Quispe','Jorge Huamán','Luis Paredes','María Torres','R
 
 const SYSTEM = `Eres «Analista Andina», analista comercial y de negocios de Distribuidora Andina (empresa ficticia, datos 2025, montos en soles S/). Hablas con el gerente comercial.
 
-TONO Y ESTILO (respuestas humanas): escribe como un analista senior que conversa, no como un robot ni un volcado de datos. Español natural, cálido y profesional, en primera persona. Empieza por la respuesta directa, luego da contexto breve, interpreta el porqué y cierra con una recomendación comercial accionable cuando aporte valor. Usa como mucho 1–2 emojis y frases cortas; evita listas interminables y tecnicismos. Si una cifra es buena o preocupante, dilo con criterio de negocio (margen, cobranza, crecimiento).
+TONO Y ESTILO (muy humano): habla como una persona real, un colega analista que conversa con el gerente tomando un café. Español natural y cercano, en primera persona, con calidez y seguridad. Nada de sonar a robot ni a reporte: frases cortas, lenguaje llano, una pizca de personalidad. Arranca con la respuesta directa en una frase, luego explica el porqué en lenguaje de negocio y, si aporta, cierra con una recomendación concreta o una pregunta para seguir. Usa 1–2 emojis como mucho. Evita listas largas, viñetas y jerga técnica; prefiere contar la historia detrás del número. Reacciona con criterio: celebra lo bueno, advierte lo preocupante (margen, cobranza, crecimiento). Si falta un dato, pídelo con naturalidad.
 
 REGLA DE ORO: NUNCA inventes, estimes ni redondees cifras de memoria. Toda cifra (ventas, margen, pedidos, vencido, rankings por mes/región/canal/producto) DEBE provenir de la herramienta resumen_ventas. Si no tienes el dato, llama a la herramienta. Si la herramienta no lo ofrece, dilo con claridad en vez de inventar.
 
 HERRAMIENTA disponible:
-- resumen_ventas(mes?, region?, canal?, vendedor?): devuelve el resumen filtrado de la API real. Campos: ventas, margen, vencido, pedidos, ventasPorMes[], ventasPorRegion[], ventasPorCanal[], top5Productos[]. Filtros válidos:
+- resumen_ventas(mes?, region?, canal?, vendedor?): calcula el resumen sobre el dataset oficial ventas-2025.json (ventas reales, línea por línea). Devuelve: ventas, margen, vencido, pendiente, pedidos, ventasPorMes[], ventasPorRegion[], ventasPorCanal[], ventasPorCategoria[], top5Productos[], y ventasPorVendedor[] (cada vendedor con ventas, margen, margenPct y descuentoPromedio en %). Filtros válidos:
   · mes: número 1..12 (o nada = todo el año)
   · region: ${REGIONES.join(', ')}
   · canal: ${CANALES.join(', ')}
   · vendedor: ${VENDEDORES.join(', ')}
-  (La herramienta NO expone descuentos por vendedor ni categorías; no inventes eso.)
+  Para «mejor vendedor» mira ventasPorVendedor (ventas y margen). Para «quién da más descuento» mira descuentoPromedio. Para categorías usa ventasPorCategoria. No inventes nada fuera de lo que devuelve la herramienta.
 
 PROTOCOLO: responde SIEMPRE con UN ÚNICO objeto JSON, sin texto alrededor, en una de estas dos formas:
 1) Para consultar datos:
@@ -171,6 +186,15 @@ PROTOCOLO: responde SIEMPRE con UN ÚNICO objeto JSON, sin texto alrededor, en u
    {"accion":"final","respuesta":"texto claro en español, citando las cifras obtenidas con S/ y separador de miles"}
 
 Puedes encadenar varias consultas (una por turno) antes de la respuesta final. En la respuesta final: menciona el filtro usado (p. ej. «en Lima, diciembre»), interpreta los números como un analista comercial y, cuando tenga sentido, sugiere una acción. Nada de JSON en la respuesta final: solo texto humano.`;
+
+/* ---- debug visible en la página ---- */
+function dbg(msg, cls){
+  const t=new Date().toLocaleTimeString('es-PE',{hour12:false});
+  const line='['+t+'] '+msg;
+  console.log('[Andina]', msg);
+  const box=document.getElementById('dbgLog');
+  if(box){ const d=document.createElement('div'); if(cls)d.className=cls; d.textContent=line; box.appendChild(d); box.scrollTop=box.scrollHeight; }
+}
 
 /* ---- utilidades ---- */
 const PEN = new Intl.NumberFormat('es-PE',{maximumFractionDigits:0});
@@ -192,19 +216,57 @@ function extractJSON(text){
   return fb;
 }
 
+/* dataset oficial, cargado una sola vez desde ventas-2025.json */
+let DATASET=null, DATASET_PROMISE=null;
+function loadDataset(){
+  if(DATASET) return Promise.resolve(DATASET);
+  if(!DATASET_PROMISE){
+    dbg('⬇ cargando ventas-2025.json …','dbg-tool');
+    DATASET_PROMISE=fetch(DATA_URL,{headers:{Accept:'application/json'}})
+      .then(r=>{ if(!r.ok) throw new Error('JSON '+r.status); return r.json(); })
+      .then(d=>{ DATASET=d; dbg('✓ dataset cargado: '+d.length.toLocaleString('es-PE')+' líneas de venta','dbg-ok'); return d; })
+      .catch(e=>{ DATASET_PROMISE=null; dbg('✖ no se pudo cargar el JSON: '+e.message,'dbg-err'); throw e; });
+  }
+  return DATASET_PROMISE;
+}
+
+function computeSummary(rows){
+  const grp=(key)=>{ const m=new Map(); for(const r of rows){ const o=m.get(r[key])||{ventas:0,margen:0}; o.ventas+=r.venta; o.margen+=r.margen; m.set(r[key],o);}
+    return [...m.entries()].map(([k,o])=>({[key]:k,ventas:+o.ventas.toFixed(2),margen:+o.margen.toFixed(2)})).sort((a,b)=>b.ventas-a.ventas); };
+  const ventas=rows.reduce((s,r)=>s+r.venta,0);
+  const margen=rows.reduce((s,r)=>s+r.margen,0);
+  const vencido=rows.filter(r=>r.estado_pago==='Vencido').reduce((s,r)=>s+r.venta,0);
+  const pendiente=rows.filter(r=>r.estado_pago==='Pendiente').reduce((s,r)=>s+r.venta,0);
+  const pedidos=new Set(rows.map(r=>r.pedido)).size;
+  const mm=new Map(); for(const r of rows){ const o=mm.get(r.mes)||{ventas:0,margen:0}; o.ventas+=r.venta; o.margen+=r.margen; mm.set(r.mes,o); }
+  const ventasPorMes=[...Array(12)].map((_,i)=>({mes:i+1,ventas:+(((mm.get(i+1)||{}).ventas)||0).toFixed(2),margen:+(((mm.get(i+1)||{}).margen)||0).toFixed(2)}));
+  const vm=new Map(); for(const r of rows){ const o=vm.get(r.vendedor)||{ventas:0,margen:0,desc:0,n:0}; o.ventas+=r.venta; o.margen+=r.margen; o.desc+=r.descuento; o.n++; vm.set(r.vendedor,o); }
+  const ventasPorVendedor=[...vm.entries()].map(([k,o])=>({vendedor:k,ventas:+o.ventas.toFixed(2),margen:+o.margen.toFixed(2),
+    margenPct:o.ventas?+(o.margen/o.ventas*100).toFixed(1):0, descuentoPromedio:o.n?+(o.desc/o.n*100).toFixed(1):0})).sort((a,b)=>b.ventas-a.ventas);
+  return {
+    ventas:+ventas.toFixed(2), margen:+margen.toFixed(2), vencido:+vencido.toFixed(2), pendiente:+pendiente.toFixed(2), pedidos,
+    ventasPorMes,
+    ventasPorRegion:grp('region'), ventasPorCanal:grp('canal'), ventasPorCategoria:grp('categoria'),
+    top5Productos:grp('producto').slice(0,5), ventasPorVendedor,
+  };
+}
+
 async function resumenVentas(f={}){
-  const qs=new URLSearchParams();
-  if(f.mes!=null && f.mes!=='') qs.set('mes',String(f.mes));
-  if(f.region) qs.set('region',f.region);
-  if(f.canal) qs.set('canal',f.canal);
-  if(f.vendedor) qs.set('vendedor',f.vendedor);
-  const url=RESUMEN_BASE+(qs.toString()?'?'+qs:'');
-  const r=await fetch(url,{headers:{Accept:'application/json'}});
-  if(!r.ok) throw new Error('resumen '+r.status);
-  return {url, data:await r.json()};
+  const data=await loadDataset();
+  let rows=data;
+  if(f.mes!=null && f.mes!=='') rows=rows.filter(r=>String(r.mes)===String(f.mes));
+  if(f.region)   rows=rows.filter(r=>r.region===f.region);
+  if(f.canal)    rows=rows.filter(r=>r.canal===f.canal);
+  if(f.vendedor) rows=rows.filter(r=>r.vendedor===f.vendedor);
+  dbg('🔧 resumen_ventas(ventas-2025.json) · filtros '+JSON.stringify(f)+' → '+rows.length+' líneas','dbg-tool');
+  const summary=computeSummary(rows);
+  summary._lineas=rows.length;
+  dbg('✓ calculado → ventas='+soles(summary.ventas)+' · pedidos='+summary.pedidos+' · vencido='+soles(summary.vencido),'dbg-ok');
+  return {url:'ventas-2025.json ('+rows.length+' líneas)', data:summary};
 }
 
 async function callLLM(messages){
+  dbg('→ OpenRouter ['+MODEL+'] · '+messages.length+' mensajes','dbg-llm');
   const r=await fetch(OPENROUTER,{
     method:'POST',
     headers:{
@@ -216,8 +278,10 @@ async function callLLM(messages){
     body:JSON.stringify({model:MODEL,temperature:0.2,max_tokens:900,messages})
   });
   const j=await r.json();
-  if(!r.ok) throw new Error('OpenRouter '+r.status+': '+((j.error&&j.error.message)||JSON.stringify(j)).slice(0,300));
-  return (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '';
+  if(!r.ok){ const em='OpenRouter '+r.status+': '+((j.error&&j.error.message)||JSON.stringify(j)).slice(0,300); dbg('✖ '+em,'dbg-err'); throw new Error(em); }
+  const content=(j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '';
+  dbg('← OpenRouter '+r.status+' · '+content.length+' chars: '+content.slice(0,140).replace(/\s+/g,' '),'dbg-llm');
+  return content;
 }
 
 /* ---- bucle del agente (en el navegador) ---- */
@@ -225,11 +289,13 @@ async function agentTurn(history){
   const convo=[{role:'system',content:SYSTEM},
     ...history.map(m=>({role:m.role==='assistant'?'assistant':'user',content:String(m.content||'')}))];
   const queries=[];
+  dbg('▶ Nuevo turno del agente');
   for(let step=0;step<MAX_STEPS;step++){
     const raw=await callLLM(convo);
     const parsed=extractJSON(raw);
-    if(!parsed||!parsed.accion) return {reply:(raw||'').trim()||'No pude generar una respuesta.',queries};
-    if(parsed.accion==='final') return {reply:String(parsed.respuesta||'').trim(),queries};
+    dbg('   acción detectada: '+(parsed&&parsed.accion||'(ninguna / sin JSON)'));
+    if(!parsed||!parsed.accion){ dbg('⚠ el modelo no devolvió JSON del protocolo; muestro su texto','dbg-err'); return {reply:(raw||'').trim()||'No pude generar una respuesta.',queries}; }
+    if(parsed.accion==='final'){ dbg('■ respuesta final ('+queries.length+' consultas hechas)','dbg-ok'); return {reply:String(parsed.respuesta||'').trim(),queries}; }
     if(parsed.accion==='resumen_ventas'){
       const filtros=parsed.filtros||{};
       let obs;
@@ -271,7 +337,7 @@ function queriedPanel(queries){
     if(q.error) return `<div class="flt">🔎 ${esc(fmtFiltros(q.filtros))} → error: ${esc(q.error)}</div>`;
     const d=q.resultado||{};
     return `<div style="margin-bottom:8px">
-      <div class="flt">🔎 Consulté /api/resumen · ${esc(fmtFiltros(q.filtros))}</div>
+      <div class="flt">🔎 Calculé desde ventas-2025.json · ${esc(fmtFiltros(q.filtros))}</div>
       <table>
         <tr><td>Ventas</td><td><b>${soles(d.ventas)}</b></td><td>Margen</td><td><b>${soles(d.margen)}</b></td></tr>
         <tr><td>Pedidos</td><td><b>${PEN.format(d.pedidos||0)}</b></td><td>Vencido</td><td><b>${soles(d.vencido)}</b></td></tr>
@@ -321,8 +387,13 @@ send.addEventListener('click',()=>ask(inp.value));
 inp.addEventListener('keydown',e=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); ask(inp.value); }});
 inp.addEventListener('input',()=>{ inp.style.height='auto'; inp.style.height=Math.min(inp.scrollHeight,140)+'px'; });
 document.getElementById('chips').addEventListener('click',e=>{ if(e.target.classList.contains('chip')) ask(e.target.textContent); });
+document.getElementById('dbgClear').addEventListener('click',()=>{document.getElementById('dbgLog').innerHTML='';});
 
-if(!API_KEY){ showSetup(); }
+// estado inicial en el debug
+dbg('⚙ Estado: key '+(API_KEY?('configurada ('+API_KEY.slice(0,8)+'…)'):'AUSENTE')+' · modelo '+MODEL);
+dbg('⚙ Fuente de datos: '+DATA_URL);
+if(!API_KEY){ dbg('⚠ Sin key: modo configuración','dbg-err'); showSetup(); }
+else { dbg('✓ Listo. Escribe una pregunta para ver las consultas.','dbg-ok'); loadDataset().catch(()=>{}); }
 
 /* tema compartido con el dashboard */
 try{ if((localStorage.getItem('andina-theme')||'dark')==='light') document.documentElement.setAttribute('data-theme','light'); }catch(e){}
